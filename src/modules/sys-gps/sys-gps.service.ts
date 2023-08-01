@@ -1,12 +1,13 @@
 import { HttpException, HttpStatus, Inject, Injectable } from '@nestjs/common';
 import { CreateSysGpDto } from './dto/create-sys-gp.dto';
-import { UpdateSysGpDto } from './dto/update-sys-gp.dto';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { first, isArray, isEmpty } from 'lodash';
 import { ClientProxy } from '@nestjs/microservices';
 import SysGps, { GpsDocument } from '../../database/models/sys_gps/gps.schema';
-import { GpsAttributes } from '../../database/models/sys_gps/gps.attributes';
+import * as PromiseB from 'bluebird';
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const cleanDeep = require('clean-deep');
 
 @Injectable()
 export class SysGpsService {
@@ -49,63 +50,51 @@ export class SysGpsService {
 
   async findGroupByUserId(userIds: string[]) {
     try {
-      const result: GpsAttributes[] = await this.sysGpModel
-        .aggregate([
-          {
-            $match: {
-              userId: { $in: isArray(userIds) ? userIds : [userIds] },
-            },
-          },
-          {
-            $sort: {
-              'location.timestampToDate': -1,
-            },
-          },
-          {
-            $group: {
-              _id: '$userId',
-              firstDocument: { $first: '$$ROOT' },
-            },
-          },
-          {
-            $replaceRoot: {
-              newRoot: '$firstDocument',
-            },
-          },
-          {
-            $project: {
-              event: '$location.event',
-              is_moving: '$location.is_moving',
-              uuid: '$location.uuid',
-              timestamp: '$location.timestamp',
-              odometer: '$location.odometer',
-              latitude: '$location.coords.latitude',
-              longitude: '$location.coords.longitude',
-              accuracy: '$location.coords.accuracy',
-              speed: '$location.coords.speed',
-              heading: '$location.coords.heading',
-              speed_accuracy: '$location.coords.speed_accuracy',
-              heading_accuracy: '$location.coords.heading_accuracy',
-              altitude: '$location.coords.altitude',
-              altitude_accuracy: '$location.coords.altitude_accuracy',
-              activity: '$location.activity',
-              battery: '$location.battery',
-              extras: '$location.extras',
-              userId: 1,
-              sessionId: 1,
-              orderCode: 1,
-              userNumber: 1,
-              userName: 1,
-              id: 1,
-              createdAt: 1,
-              updatedAt: 1,
-            },
-          },
-        ])
-        .allowDiskUse(true)
-        .read('secondaryPreferred')
-        .exec();
-      return result;
+      const u = isArray(userIds) ? userIds : [userIds];
+      const result = await PromiseB.map(
+        u,
+        async (userId) => {
+          return this.sysGpModel
+            .findOne(
+              { userId },
+              {
+                event: '$location.event',
+                is_moving: '$location.is_moving',
+                uuid: '$location.uuid',
+                timestamp: '$location.timestamp',
+                odometer: '$location.odometer',
+                latitude: '$location.coords.latitude',
+                longitude: '$location.coords.longitude',
+                accuracy: '$location.coords.accuracy',
+                speed: '$location.coords.speed',
+                heading: '$location.coords.heading',
+                speed_accuracy: '$location.coords.speed_accuracy',
+                heading_accuracy: '$location.coords.heading_accuracy',
+                altitude: '$location.coords.altitude',
+                altitude_accuracy: '$location.coords.altitude_accuracy',
+                activity: '$location.activity',
+                battery: '$location.battery',
+                extras: '$location.extras',
+                userId: 1,
+                sessionId: 1,
+                orderCode: 1,
+                userNumber: 1,
+                userName: 1,
+                id: 1,
+                createdAt: 1,
+                updatedAt: 1,
+              },
+              {
+                readPreference: 'secondaryPreferred',
+              },
+            )
+            .sort({ 'location.timestampToDate': -1 })
+            .lean()
+            .exec();
+        },
+        { concurrency: 50 },
+      );
+      return cleanDeep(result);
     } catch (err) {
       throw new HttpException(
         {
